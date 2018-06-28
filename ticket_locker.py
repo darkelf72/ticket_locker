@@ -5,6 +5,9 @@ import os
 import datetime
 import time
 import re
+import sys
+sys.path.append('../')
+import mylib
 
 #Для подавления сообщения "InsecureRequestWarning: Unverified HTTPS request is being made. Adding certificate verification is strongly advised."
 import urllib3
@@ -14,14 +17,11 @@ url = 'http://itagent.otkritie.ru'
 #Параметры для авторизации в ОТРС
 payload = {}
 payload['Action'] = 'Login'
-payload['User'] = 'srodionov'
-payload['Password'] = ''
+payload['User'] = mylib.auth('otrs')['login']
+payload['Password'] = mylib.auth('otrs')['password']
 
 #Список наименований шаблонов поиска ОТРС, по которым будем искать и лочить заявки
-otrs_profiles = []
-otrs_profiles.append('ticket_locker_test')   
-#otrs_profiles.append('ticket_locker_test2')
-#otrs_profiles.append('ticket_locker_test3')
+otrs_profiles = mylib.otrs_profiles()
 
 try:
     s = requests.Session()
@@ -73,6 +73,8 @@ now = datetime.datetime.now()
 file_name = now.strftime("%Y-%m-%d")+'.log'
 file_name = file_path+'/'+file_name
 
+#массив залоченных заявок для исключения повторного залочивания
+locked_tickets = []
 #Цикл будет работать только в рабочее время (чтобы не привлекать внимание постоянными запросами ночью или в воскресенье)
 while now.time() > datetime.time(8) and now.time() < datetime.time(18) and now.isoweekday() < 7: 
     for Profile in otrs_profiles:
@@ -95,17 +97,19 @@ while now.time() > datetime.time(8) and now.time() < datetime.time(18) and now.i
         if result != None:
             TicketID = result.group(1)
 
-            TicketNumber = tree.xpath('//head/title/text()')[0]
-            result = re.search('^(\d+)',TicketNumber)
-            TicketNumber = result.group(1)
-            print(TicketNumber)
-            log_file.write(TicketNumber+'\n')
+            if TicketID not in locked_tickets:
+                TicketNumber = tree.xpath('//head/title/text()')[0]
+                result = re.search('^(\d+)',TicketNumber)
+                TicketNumber = result.group(1)
+                print(TicketNumber)
+                log_file.write(TicketNumber+'\n')
 
-            #Лочим заявку
-            lock_params['TicketID'] = TicketID
-            r = s.post(url, verify=False, params=lock_params)
-            print(r.url)
-            log_file.write(r.url+'\n')
+                #Лочим заявку
+                lock_params['TicketID'] = TicketID
+                r = s.post(url, verify=False, params=lock_params)
+                locked_tickets.append(TicketID)
+                print(r.url)
+                log_file.write(r.url+'\n')
 
         #Если не было редиректа на Action=AgentTicketZoom;TicketID= то заявок 0 или больше 1
         else:
@@ -117,15 +121,17 @@ while now.time() > datetime.time(8) and now.time() < datetime.time(18) and now.i
                 result = re.search('TicketID_(\d+)',ticket.xpath('./@id')[0])
                 TicketID = result.group(1)
 
-                TicketNumber = ticket.xpath('.//a[@class = "MasterActionLink"]/text()')[0]
-                print('Заявка №: '+TicketNumber)
-                log_file.write('Заявка №: '+TicketNumber+'\n')
+                if TicketID not in locked_tickets:
+                    TicketNumber = ticket.xpath('.//a[@class = "MasterActionLink"]/text()')[0]
+                    print('Заявка №: '+TicketNumber)
+                    log_file.write('Заявка №: '+TicketNumber+'\n')
 
-                #Лочим заявку
-                lock_params['TicketID'] = TicketID            
-                r = s.post(url, verify=False, params=lock_params)
-                print(r.url)
-                log_file.write(r.url+'\n')
+                    #Лочим заявку
+                    lock_params['TicketID'] = TicketID            
+                    r = s.post(url, verify=False, params=lock_params)
+                    locked_tickets.append(TicketID)
+                    print(r.url)
+                    log_file.write(r.url+'\n')
 
         print(         '--------------------')
         log_file.write('--------------------\n')
